@@ -1299,3 +1299,60 @@ func trimSliceSpace(s []string) []string {
 	}
 	return s
 }
+
+func TestRowsColumnTypes(t *testing.T) {
+	f := NewFile()
+	sheet := "Sheet1"
+	// Row 1: text, number, (empty), bool and formula cells
+	require.NoError(t, f.SetCellStr(sheet, "A1", "1.50"))
+	require.NoError(t, f.SetCellFloat(sheet, "B1", 1.5, -1, 64))
+	require.NoError(t, f.SetCellBool(sheet, "D1", true))
+	require.NoError(t, f.SetCellFormula(sheet, "E1", "A1&B1"))
+	// Row 2 is missing, row 3 has a single numeric cell
+	require.NoError(t, f.SetCellInt(sheet, "B3", 7))
+
+	// Reopen the saved workbook, as the types are the ones stored in the file
+	path := filepath.Join(t.TempDir(), "column_types.xlsx")
+	require.NoError(t, f.SaveAs(path))
+	f, err := OpenFile(path)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, f.Close()) }()
+
+	rows, err := f.Rows(sheet)
+	require.NoError(t, err)
+
+	// assertTypes checks that the types are aligned with the values and match GetCellType
+	assertTypes := func(row int, values []string) {
+		types := rows.ColumnTypes()
+		require.Equal(t, len(values), len(types))
+		for i := range values {
+			cell, err := CoordinatesToCellName(i+1, row)
+			require.NoError(t, err)
+			expected, err := f.GetCellType(sheet, cell)
+			require.NoError(t, err)
+			assert.Equal(t, expected, types[i], cell)
+		}
+	}
+
+	assert.True(t, rows.Next())
+	values, err := rows.Columns(Options{RawCellValue: true})
+	require.NoError(t, err)
+	require.Equal(t, 5, len(values))
+	assertTypes(1, values)
+	assert.Equal(t, CellTypeSharedString, rows.ColumnTypes()[0])
+	assert.Equal(t, CellTypeBool, rows.ColumnTypes()[3])
+
+	// Missing row: no values, no types
+	assert.True(t, rows.Next())
+	values, err = rows.Columns()
+	require.NoError(t, err)
+	assert.Nil(t, values)
+	assert.Empty(t, rows.ColumnTypes())
+
+	assert.True(t, rows.Next())
+	values, err = rows.Columns(Options{RawCellValue: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"", "7"}, values)
+	assertTypes(3, values)
+	assert.NoError(t, rows.Close())
+}

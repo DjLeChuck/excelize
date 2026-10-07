@@ -93,6 +93,7 @@ type Rows struct {
 	decoder                 *xml.Decoder
 	token                   xml.Token
 	curRowOpts, seekRowOpts RowOpts
+	cellTypes               []CellType
 }
 
 // Next will return true if it finds the next row element.
@@ -155,10 +156,21 @@ func (rows *Rows) Close() error {
 	return rows.Error()
 }
 
+// ColumnTypes returns the cell types of the row last read by Columns, aligned
+// with the values it returned: the type at index i is the type of the cell
+// whose value is at index i. Cells without a value in between get
+// CellTypeUnset. Unlike GetCellType, it reads the types while streaming the
+// worksheet and does not load the whole worksheet into memory. The returned
+// slice is only valid until the next call to Columns.
+func (rows *Rows) ColumnTypes() []CellType {
+	return rows.cellTypes
+}
+
 // Columns return the current row's column values. This fetches the worksheet
 // data as a stream, returns each cell in a row as is, and will not skip empty
 // rows in the tail of the worksheet.
 func (rows *Rows) Columns(opts ...Options) ([]string, error) {
+	rows.cellTypes = rows.cellTypes[:0]
 	if rows.curRow > rows.seekRow {
 		return nil, nil
 	}
@@ -253,6 +265,10 @@ func (rows *Rows) rowXMLHandler(rowIterator *rowXMLIterator, xmlElement *xml.Sta
 		blank := rowIterator.cellCol - len(rowIterator.cells)
 		if val, _ := colCell.getValueFrom(rows.f, rows.sst, raw); val != "" || colCell.F != nil {
 			rowIterator.cells = append(appendSpace(blank, rowIterator.cells), val)
+			for len(rows.cellTypes) < len(rowIterator.cells)-1 {
+				rows.cellTypes = append(rows.cellTypes, CellTypeUnset)
+			}
+			rows.cellTypes = append(rows.cellTypes, cellTypes[colCell.T])
 		}
 	}
 }
